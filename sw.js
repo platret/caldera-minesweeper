@@ -1,0 +1,58 @@
+/* ============================================================
+   sw.js — minimal cache-first service worker for offline play.
+   Bump CACHE when shipping changes to invalidate old assets.
+   ============================================================ */
+
+const CACHE = "caldera-v1";
+const ASSETS = [
+  "./",
+  "./index.html",
+  "./manifest.webmanifest",
+  "./assets/favicon.svg",
+  "./styles/tokens.css",
+  "./styles/base.css",
+  "./styles/layout.css",
+  "./styles/board.css",
+  "./styles/animations.css",
+  "./src/main.js",
+  "./src/engine.js",
+  "./src/board.js",
+  "./src/render.js",
+  "./src/input.js",
+  "./src/timer.js",
+  "./src/storage.js",
+  "./src/settings.js",
+  "./src/stats.js",
+  "./src/solver.js",
+  "./src/confetti.js",
+  "./src/ui.js",
+];
+
+self.addEventListener("install", (e) => {
+  e.waitUntil(caches.open(CACHE).then((c) => c.addAll(ASSETS)).then(() => self.skipWaiting()));
+});
+
+self.addEventListener("activate", (e) => {
+  e.waitUntil(
+    caches.keys().then((keys) =>
+      Promise.all(keys.filter((k) => k !== CACHE).map((k) => caches.delete(k)))
+    ).then(() => self.clients.claim())
+  );
+});
+
+self.addEventListener("fetch", (e) => {
+  const { request } = e;
+  if (request.method !== "GET") return;
+  e.respondWith(
+    caches.match(request).then((cached) =>
+      cached ||
+      fetch(request)
+        .then((res) => {
+          const copy = res.clone();
+          caches.open(CACHE).then((c) => c.put(request, copy)).catch(() => {});
+          return res;
+        })
+        .catch(() => caches.match("./index.html"))
+    )
+  );
+});
