@@ -22,8 +22,10 @@ hostable anywhere static (GitHub Pages included).
   announcements, and `prefers-reduced-motion` support.
 - 📱 **Mobile-ready** — responsive sizing, tap-to-reveal, long-press-to-flag with
   a radial progress ring, haptics, and a tap-to-flag toggle.
-- 🏆 **Persistence** — best times, win-rate and streaks per difficulty in
-  `localStorage`, plus automatic resume of an in-progress game.
+- 🏆 **Persistence & leaderboard** — best times, win-rate and streaks per
+  difficulty in `localStorage`, automatic resume of an in-progress game, and an
+  optional global, name-based **online leaderboard** (Supabase) that gracefully
+  degrades to offline when unconfigured.
 - ⚡ **Performance-first** — flat typed-array board model, O(changed) DOM updates,
   iterative (never recursive) flood-fill, GPU-only animations.
 - 🔌 **Offline / installable** — a tiny service worker precaches everything; add to
@@ -57,12 +59,36 @@ runner — no install needed:
 node --test
 ```
 
-## Deploy to GitHub Pages
+## Deploy to Vercel
 
-The repo ships a workflow (`.github/workflows/pages.yml`) that publishes the
-repository root on every push to `main`. In **Settings → Pages**, set the source
-to **GitHub Actions**. All asset paths are relative, so it works from a project
-subpath (`/<repo>/`).
+The repo is Vercel-ready (`vercel.json`). The build step
+(`node scripts/build-config.mjs`) injects the public Supabase config from
+environment variables into `config.js` at deploy time.
+
+1. **Import** the GitHub repo at <https://vercel.com/new> (Framework preset:
+   **Other** — the settings come from `vercel.json`).
+2. Add two **Environment Variables** (Project → Settings → Environment
+   Variables): `SUPABASE_URL` and `SUPABASE_ANON_KEY`.
+3. **Deploy.** Every push to `main` auto-deploys; pull requests get preview URLs.
+
+`.github/workflows/ci.yml` runs the engine tests on every push/PR.
+
+## Online leaderboard (Supabase)
+
+The leaderboard is optional — without it the game runs fully offline using
+local best times. To enable the global, name-based leaderboard:
+
+1. Create a project at <https://supabase.com> (free tier is plenty).
+2. In **SQL Editor**, run [`scripts/supabase-setup.sql`](scripts/supabase-setup.sql).
+   It creates a `scores` table and Row-Level Security policies that let the
+   public anon key **read** the board and **insert** a score — nothing else.
+3. From **Project Settings → API**, copy the **Project URL** and the **anon
+   public** key into the Vercel env vars above (and into `config.js` locally if
+   you want to test the leaderboard on `localhost`).
+
+Scores are submitted on a win for the three preset difficulties (assisted runs
+and custom boards are excluded). The anon key is a public client key — safe to
+ship to the browser; data integrity is enforced by RLS + column checks.
 
 ## Architecture
 
@@ -86,8 +112,14 @@ src/
   stats.js            best times / win-rate / streaks
   solver.js           constraint deduction for the Hint feature
   confetti.js         one-shot win burst
+  leaderboard.js      optional Supabase client (lazy-loaded, RLS-protected)
   ui.js               chrome wiring (HUD, dialogs, theme, overlay)
   main.js             composition root
+config.js             runtime config (env-injected at build time)
+vercel.json           Vercel build command + headers
+scripts/
+  build-config.mjs    writes config.js from SUPABASE_* env vars
+  supabase-setup.sql  leaderboard schema + Row-Level Security
 sw.js                 offline service worker
 tests/engine.test.mjs engine unit + fuzz tests
 ```
