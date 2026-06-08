@@ -5,7 +5,8 @@
    The anon key is public; data is protected by Row-Level Security.
    ============================================================ */
 
-const SUPABASE_ESM = "https://esm.sh/@supabase/supabase-js@2.45.4";
+// @2 = latest v2 (supports both the legacy anon JWT and the new sb_publishable_ key)
+const SUPABASE_ESM = "https://esm.sh/@supabase/supabase-js@2";
 
 let client = null;
 let loading = null;
