@@ -5,6 +5,7 @@
 import * as storage from "./storage.js";
 
 export const DEFAULTS = Object.freeze({
+  name: "",              // leaderboard display name
   theme: "system",       // system | caldera | dark | slate | classic  (system => light/dark by OS)
   palette: "caldera",    // light-family palette choice when not dark
   question: false,

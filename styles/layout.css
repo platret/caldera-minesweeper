@@ -328,6 +328,49 @@ input[type="range"]::-moz-range-thumb {
 .stat-row .meta { font-size: 12px; color: var(--muted); }
 .stat-summary { font-size: 13px; color: var(--muted); text-align: center; }
 
+/* ---------- text inputs ---------- */
+.text-input, .lb-input {
+  padding: 7px 11px;
+  border-radius: 9px;
+  background: var(--bg);
+  border: 1px solid var(--hairline);
+  color: var(--text);
+  font-size: 14px;
+  min-width: 0;
+}
+.text-input { width: 160px; }
+.text-input:focus-visible, .lb-input:focus-visible { outline: 2.5px solid var(--focus); outline-offset: 1px; }
+
+/* ---------- leaderboard ---------- */
+.lb-tabs { margin-bottom: 2px; }
+.lb-tabs .seg-thumb { display: none; }
+.lb-seg[aria-pressed="true"] {
+  background: linear-gradient(180deg, var(--cell-top), var(--cell-top-grad));
+  box-shadow: 0 2px 6px rgba(0,0,0,.12);
+  color: var(--text);
+}
+.lb-list { display: flex; flex-direction: column; gap: 6px; min-height: 120px; }
+.lb-row {
+  display: grid;
+  grid-template-columns: 28px 1fr auto;
+  gap: 12px;
+  align-items: baseline;
+  padding: 9px 12px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--bg-deep) 60%, transparent);
+  border: 1px solid var(--hairline);
+}
+.lb-row .rank { font-family: var(--font-mono); color: var(--muted); font-weight: 600; }
+.lb-row.podium .rank { color: var(--accent); }
+.lb-row .who { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lb-row .when { font-family: var(--font-mono); color: var(--accent); font-weight: 600; }
+.lb-empty { color: var(--muted); text-align: center; padding: 24px 8px; font-size: 13.5px; line-height: 1.6; }
+
+/* ---------- win-overlay submit ---------- */
+.overlay-rank { font-weight: 700; color: var(--accent); font-size: 14px; }
+.overlay-lb { display: flex; gap: 8px; margin-top: 6px; width: 100%; }
+.overlay-lb .lb-input { flex: 1; }
+
 /* ---------- responsive ---------- */
 @media (max-width: 560px) {
   .toolbar { justify-content: center; }

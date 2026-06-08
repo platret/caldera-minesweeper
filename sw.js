@@ -3,12 +3,13 @@
    Bump CACHE when shipping changes to invalidate old assets.
    ============================================================ */
 
-const CACHE = "caldera-v2";
+const CACHE = "caldera-v3";
 const ASSETS = [
   "./",
   "./index.html",
   "./manifest.webmanifest",
   "./assets/favicon.svg",
+  "./src/leaderboard.js",
   "./styles/tokens.css",
   "./styles/base.css",
   "./styles/layout.css",
@@ -43,6 +44,14 @@ self.addEventListener("activate", (e) => {
 self.addEventListener("fetch", (e) => {
   const { request } = e;
   if (request.method !== "GET") return;
+  const url = new URL(request.url);
+  // let cross-origin requests (Supabase API, esm.sh CDN) go straight to network
+  if (url.origin !== location.origin) return;
+  // never cache runtime config — it carries env-injected keys that may change
+  if (url.pathname.endsWith("/config.js")) {
+    e.respondWith(fetch(request).catch(() => caches.match(request)));
+    return;
+  }
   e.respondWith(
     caches.match(request).then((cached) =>
       cached ||

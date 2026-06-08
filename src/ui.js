@@ -16,6 +16,11 @@ const FACES = { idle: "🙂", playing: "🙂", surprise: "😮", won: "😎", lo
 
 const $ = (id) => document.getElementById(id);
 
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, (c) =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+
 export class UI {
   constructor() {
     this.el = {
@@ -33,7 +38,13 @@ export class UI {
       theme: $("btn-theme"),
       settingsBtn: $("btn-settings"),
       statsBtn: $("btn-stats"),
+      lbBtn: $("btn-leaderboard"),
       bestTime: $("best-time"),
+      // leaderboard dialog
+      lbDlg: $("leaderboard-dialog"),
+      lbSegs: [...document.querySelectorAll(".lb-seg")],
+      lbList: $("lb-list"),
+      lbClose: $("lb-close"),
       // overlay
       overlay: $("overlay"),
       ovEmoji: $("overlay-emoji"),
@@ -42,6 +53,10 @@ export class UI {
       ovBest: $("overlay-best"),
       ovAgain: $("overlay-again"),
       ovDismiss: $("overlay-dismiss"),
+      ovRank: $("overlay-rank"),
+      ovLb: $("overlay-lb"),
+      ovName: $("overlay-name"),
+      ovSubmit: $("overlay-submit"),
       // custom dialog
       customDlg: $("custom-dialog"),
       inpW: $("inp-width"), outW: $("out-width"),
@@ -53,6 +68,7 @@ export class UI {
       statsReset: $("stats-reset"), statsClose: $("stats-close"),
       // settings dialog
       setDlg: $("settings-dialog"),
+      setName: $("set-name"),
       setPalette: $("set-palette"), setQuestion: $("set-question"),
       setChord: $("set-chord"), setSafe: $("set-safe"),
       setAnim: $("set-anim"), setHaptics: $("set-haptics"),
@@ -91,6 +107,19 @@ export class UI {
 
     e.ovAgain.addEventListener("click", () => { this.hideResult(); this._cb.onRestart && this._cb.onRestart(); });
     e.ovDismiss.addEventListener("click", () => this.hideResult());
+
+    // leaderboard
+    e.lbBtn.addEventListener("click", () => this._cb.onOpenLeaderboard && this._cb.onOpenLeaderboard());
+    e.lbClose.addEventListener("click", () => e.lbDlg.close());
+    e.lbSegs.forEach((seg) => seg.addEventListener("click", () => {
+      this.setLbActive(seg.dataset.lbdiff);
+      this._cb.onLbDifficulty && this._cb.onLbDifficulty(seg.dataset.lbdiff);
+    }));
+    e.ovLb.addEventListener("submit", (ev) => {
+      ev.preventDefault();
+      this._cb.onSubmitScore && this._cb.onSubmitScore(e.ovName.value);
+    });
+    e.setName.addEventListener("change", () => this._cb.onSetting && this._cb.onSetting("name", e.setName.value.trim()));
 
     // custom dialog: live density + submit
     const syncCustom = () => this._syncCustom();
@@ -172,10 +201,55 @@ export class UI {
     e.ovTitle.textContent = won ? "You win!" : "Boom.";
     e.ovSub.textContent = won ? `Cleared in ${formatTime(timeMs)}` : "You hit a mine.";
     e.ovBest.classList.toggle("hidden", !(won && isBest));
+    e.ovRank.classList.add("hidden");
+    e.ovLb.classList.add("hidden");
     this._prevFocus = document.activeElement;
     e.overlay.classList.remove("hidden");
     // move focus into the result card so keyboard/SR users land on the action
     requestAnimationFrame(() => e.ovAgain.focus());
+  }
+
+  /** show the inline name-entry form in the win overlay */
+  showOverlaySubmit(prefill = "") {
+    const e = this.el;
+    e.ovName.value = prefill;
+    e.ovLb.classList.remove("hidden");
+    requestAnimationFrame(() => e.ovName.focus());
+  }
+  /** replace the submit form with a rank confirmation */
+  setOverlayRank(text) {
+    const e = this.el;
+    e.ovLb.classList.add("hidden");
+    e.ovRank.textContent = text;
+    e.ovRank.classList.remove("hidden");
+  }
+
+  /* ---------- leaderboard dialog ---------- */
+  openLeaderboard(diff) {
+    this.setLbActive(diff);
+    this.renderLeaderboardLoading();
+    this.el.lbDlg.showModal();
+  }
+  setLbActive(diff) {
+    this.el.lbSegs.forEach((s) => s.setAttribute("aria-pressed", String(s.dataset.lbdiff === diff)));
+  }
+  renderLeaderboardLoading() {
+    this.el.lbList.innerHTML = `<div class="lb-empty">Loading…</div>`;
+  }
+  renderLeaderboard({ rows, offline, error }) {
+    const el = this.el.lbList;
+    if (offline) {
+      el.innerHTML = `<div class="lb-empty">Online leaderboard not configured yet.<br>Add your Supabase keys to enable it.</div>`;
+      return;
+    }
+    if (error) { el.innerHTML = `<div class="lb-empty">Couldn't load scores.<br>${escapeHtml(error)}</div>`; return; }
+    if (!rows || !rows.length) { el.innerHTML = `<div class="lb-empty">No scores yet — be the first!</div>`; return; }
+    el.innerHTML = rows.map((r, i) => `
+      <div class="lb-row${i < 3 ? " podium" : ""}">
+        <span class="rank">${i + 1}</span>
+        <span class="who">${escapeHtml(r.name)}</span>
+        <span class="when">${formatTime(r.time_ms)}</span>
+      </div>`).join("");
   }
   hideResult() {
     this.el.overlay.classList.add("hidden");
@@ -232,6 +306,7 @@ export class UI {
   reflectSettings(s) {
     const e = this.el;
     this.safeFirstClick = s.safeFirstClick;
+    e.setName.value = s.name || "";
     e.setPalette.value = s.palette;
     e.setQuestion.checked = s.question;
     e.setChord.checked = s.chord;

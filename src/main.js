@@ -16,6 +16,7 @@ import * as storage from "./storage.js";
 import * as solver from "./solver.js";
 import { burst } from "./confetti.js";
 import { formatTime } from "./timer.js";
+import * as leaderboard from "./leaderboard.js";
 
 const live = document.getElementById("live");
 const wellEl = document.querySelector(".well");
@@ -30,6 +31,7 @@ const timer = new Timer((ms) => ui.setTimer(ms));
 
 let currentDiff = storage.get("lastDiff", "beginner");
 let customConfig = storage.get("customConfig", { w: 16, h: 16, m: 40 });
+let _pendingWin = null; // {difficulty, timeMs} awaiting a name before submit
 if (!DIFFICULTIES[currentDiff] && currentDiff !== "custom") currentDiff = "beginner";
 
 function presetConfig(diff) {
@@ -102,17 +104,44 @@ function onWin() {
   ui.setMineCount(0);
   ui.setFace("won");
   const timeMs = engine.elapsedMs();
-  const isBest = stats.record(diffKey(), { won: true, timeMs, assisted: engine.assisted });
-  ui.setBest(stats.bestFor(diffKey()));
+  const dk = diffKey();
+  const isBest = stats.record(dk, { won: true, timeMs, assisted: engine.assisted });
+  ui.setBest(stats.bestFor(dk));
   if (!reducedMotion()) {
     wellEl.classList.add("win-glow");
     burst(confettiEl, { reduced: false, colors: themedConfetti() });
   }
   if (isBest && !engine.assisted) ui.pulseTimer();
   announce(`You win! Cleared in ${formatTime(timeMs)}.` + (isBest ? " New best time." : ""));
-  setTimeout(() => ui.showResult({ won: true, timeMs, isBest: isBest && !engine.assisted }), 650);
   clearSavedGame();
   ui.refreshStats(stats.all());
+
+  // Online leaderboard: only ranked presets, never assisted runs.
+  const eligible = leaderboard.isConfigured() && !!DIFFICULTIES[currentDiff] && !engine.assisted;
+  const lbDiff = currentDiff;
+  setTimeout(() => {
+    ui.showResult({ won: true, timeMs, isBest: isBest && !engine.assisted });
+    if (!eligible) return;
+    if (settings.name) submitWin(lbDiff, timeMs, settings.name);
+    else { _pendingWin = { difficulty: lbDiff, timeMs }; ui.showOverlaySubmit(""); }
+  }, 650);
+}
+
+async function submitWin(difficulty, timeMs, name) {
+  const res = await leaderboard.submitScore({ name, difficulty, timeMs });
+  if (!res.ok) {
+    ui.setOverlayRank(res.offline ? "" : "Couldn't reach the leaderboard.");
+    return;
+  }
+  const rank = await leaderboard.rankFor(difficulty, timeMs);
+  const label = (DIFFICULTIES[difficulty] || {}).label || difficulty;
+  ui.setOverlayRank(rank ? `#${rank} on the ${label} leaderboard 🏆` : `Submitted to the ${label} leaderboard 🏆`);
+}
+
+async function loadLeaderboard(diff) {
+  if (!leaderboard.isConfigured()) { ui.renderLeaderboard({ offline: true }); return; }
+  ui.renderLeaderboardLoading();
+  ui.renderLeaderboard(await leaderboard.topScores(diff, 10));
 }
 
 function onLose() {
@@ -253,6 +282,20 @@ ui.bind({
   },
   onOpenStats: () => ui.openStats(stats.all()),
   onResetStats: () => { stats.reset(); ui.refreshStats(stats.all()); ui.setBest(stats.bestFor(diffKey())); },
+  onOpenLeaderboard: () => {
+    const d = DIFFICULTIES[currentDiff] ? currentDiff : "beginner";
+    ui.openLeaderboard(d);
+    loadLeaderboard(d);
+  },
+  onLbDifficulty: (d) => loadLeaderboard(d),
+  onSubmitScore: (name) => {
+    const clean = (name || "").trim().slice(0, 20);
+    if (clean) { settings.name = clean; settingsStore.save(settings); ui.reflectSettings(settings); }
+    if (_pendingWin) {
+      submitWin(_pendingWin.difficulty, _pendingWin.timeMs, clean || "Anonymous");
+      _pendingWin = null;
+    }
+  },
   onSetting: (key, val) => {
     settings[key] = val;
     settingsStore.save(settings);
