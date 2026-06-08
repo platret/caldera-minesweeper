@@ -29,7 +29,12 @@ const key = pick(
   "SUPABASE_KEY",
 );
 
-const supabaseUrl = url.value;
+// Normalize to the bare project base URL. Some env vars (and the Vercel
+// integration) carry a service path like ".../rest/v1/" or ".../storage/v1";
+// supabase-js wants only "https://<ref>.supabase.co".
+const supabaseUrl = url.value
+  .replace(/\/(rest|auth|storage|realtime)\/v\d+\/?$/i, "")
+  .replace(/\/+$/, "");
 const supabaseAnonKey = key.value;
 
 const banner = "/* AUTO-GENERATED at build time by scripts/build-config.mjs — do not edit. */\n";

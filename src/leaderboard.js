@@ -23,7 +23,10 @@ async function getClient() {
     loading = import(SUPABASE_ESM)
       .then((m) => {
         const c = window.__CALDERA_CONFIG__;
-        client = m.createClient(c.supabaseUrl, c.supabaseAnonKey, {
+        const baseUrl = String(c.supabaseUrl || "")
+          .replace(/\/(rest|auth|storage|realtime)\/v\d+\/?$/i, "")
+          .replace(/\/+$/, "");
+        client = m.createClient(baseUrl, c.supabaseAnonKey, {
           auth: { persistSession: false, autoRefreshToken: false },
         });
         return client;
