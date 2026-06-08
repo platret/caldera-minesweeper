@@ -26,6 +26,7 @@ export class Input {
     this._startX = 0;
     this._startY = 0;
     this._pressedCell = null;
+    this._hoverIndex = -1; // cell currently under the mouse (for hover key actions)
 
     this._bind();
   }
@@ -73,9 +74,17 @@ export class Input {
     b.addEventListener("pointermove", (e) => this._onMove(e));
     b.addEventListener("pointerup", (e) => this._onUp(e));
     b.addEventListener("pointercancel", () => { this._cancelPress(); this._clearPeek(); });
-    b.addEventListener("pointerleave", () => this._clearPeek());
+    b.addEventListener("pointerleave", () => { this._clearPeek(); this._hoverIndex = -1; });
 
-    b.addEventListener("keydown", (e) => this._onKey(e));
+    // track the hovered cell so keyboard actions (F/C/Space) target it
+    b.addEventListener("pointerover", (e) => {
+      const i = this._idxFrom(e);
+      if (i >= 0) this._hoverIndex = i;
+    });
+
+    // keys are handled on window so they work during mouse play (the board
+    // isn't focused after a click). Guarded against dialogs / form fields.
+    window.addEventListener("keydown", (e) => this._onKey(e));
   }
 
   _onDown(e) {
@@ -150,30 +159,41 @@ export class Input {
   }
 
   _onKey(e) {
+    // never hijack typing in form fields or while a dialog is open
+    const ae = document.activeElement;
+    if (ae && (ae.tagName === "INPUT" || ae.tagName === "SELECT" || ae.tagName === "TEXTAREA")) return;
+    if (document.querySelector("dialog[open]")) return;
     const eng = this.renderer.engine;
     if (!eng) return;
-    const w = eng.width, h = eng.height;
-    let cur = this.renderer.cursor;
-    if (cur < 0) cur = 0;
-    let x = cur % w, y = (cur / w) | 0;
     const k = e.key.toLowerCase();
-    let move = false;
+
+    if (k === "r") { e.preventDefault(); this.h.restart(); return; }
+
+    // don't steal Space/Enter from a focused control that isn't a cell
+    const onCell = !!(ae && ae.classList && ae.classList.contains("cell"));
+    if ((k === " " || k === "enter") && ae && ae !== document.body && !onCell &&
+        (ae.tagName === "BUTTON" || ae.tagName === "A")) return;
+
+    const w = eng.width, h = eng.height;
+    // keyboard cursor wins while a cell is focused; otherwise act on the
+    // hovered cell (mouse play), falling back to the last cursor position.
+    let target = onCell ? this.renderer.cursor
+      : (this._hoverIndex >= 0 ? this._hoverIndex : this.renderer.cursor);
+    if (target < 0) target = 0;
+    let x = target % w, y = (target / w) | 0;
 
     switch (k) {
-      case "arrowleft": case "a": x = Math.max(0, x - 1); move = true; break;
-      case "arrowright": case "d": x = Math.min(w - 1, x + 1); move = true; break;
-      case "arrowup": case "w": y = Math.max(0, y - 1); move = true; break;
-      case "arrowdown": case "s": y = Math.min(h - 1, y + 1); move = true; break;
-      case "enter": case " ": e.preventDefault(); this.h.reveal(cur); return;
-      case "f": e.preventDefault(); this.h.flag(cur); return;
-      case "c": e.preventDefault(); this.h.chord(cur); return;
-      case "r": e.preventDefault(); this.h.restart(); return;
+      case "arrowleft": case "a": x = Math.max(0, x - 1); break;
+      case "arrowright": case "d": x = Math.min(w - 1, x + 1); break;
+      case "arrowup": case "w": y = Math.max(0, y - 1); break;
+      case "arrowdown": case "s": y = Math.min(h - 1, y + 1); break;
+      case "enter": case " ": e.preventDefault(); this.h.reveal(target); return;
+      case "f": e.preventDefault(); this.h.flag(target); return;
+      case "c": e.preventDefault(); this.h.chord(target); return;
       default: return;
     }
-    if (move) {
-      e.preventDefault();
-      this.renderer.setCursor(y * w + x, true);
-    }
+    e.preventDefault();
+    this.renderer.setCursor(y * w + x, true, true);
   }
 }
 

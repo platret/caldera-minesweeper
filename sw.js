@@ -3,7 +3,7 @@
    Bump CACHE when shipping changes to invalidate old assets.
    ============================================================ */
 
-const CACHE = "caldera-v1";
+const CACHE = "caldera-v2";
 const ASSETS = [
   "./",
   "./index.html",
