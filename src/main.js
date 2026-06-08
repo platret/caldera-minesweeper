@@ -244,10 +244,12 @@ ui.bind({
   },
   onHint: doHint,
   onThemeToggle: () => {
-    const cur = resolveTheme();
-    settings.theme = (cur === "dark" || cur === "slate") ? "light" : "dark";
+    // cycle system → dark → light → system so OS-follow stays reachable
+    settings.theme = settings.theme === "system" ? "dark"
+      : settings.theme === "dark" ? "light" : "system";
     applyTheme();
     settingsStore.save(settings);
+    announce(`Theme: ${settings.theme}`);
   },
   onOpenStats: () => ui.openStats(stats.all()),
   onResetStats: () => { stats.reset(); ui.refreshStats(stats.all()); ui.setBest(stats.bestFor(diffKey())); },
@@ -255,7 +257,7 @@ ui.bind({
     settings[key] = val;
     settingsStore.save(settings);
     if (key === "palette" || key === "animations") applyTheme();
-    if (key === "safeFirstClick" && !engine.firstClickDone) engine.safeFirstClick = val;
+    if (key === "safeFirstClick") { ui.safeFirstClick = val; if (!engine.firstClickDone) engine.safeFirstClick = val; }
     if (key === "question") engine.allowQuestion = val;
   },
 });

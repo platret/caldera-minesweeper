@@ -32,7 +32,8 @@ export function burst(canvas, { colors, reduced } = {}) {
     });
   }
 
-  let raf = 0;
+  // cancel any in-flight burst on this canvas so rapid wins don't stack loops
+  if (canvas._confettiRaf) cancelAnimationFrame(canvas._confettiRaf);
   const gravity = 0.16;
   const drag = 0.99;
   function frame() {
@@ -55,9 +56,8 @@ export function burst(canvas, { colors, reduced } = {}) {
       ctx.fillRect(-p.size / 2, -p.size / 2, p.size, p.size * 0.6);
       ctx.restore();
     }
-    if (alive) raf = requestAnimationFrame(frame);
-    else ctx.clearRect(0, 0, W, H);
+    if (alive) canvas._confettiRaf = requestAnimationFrame(frame);
+    else { canvas._confettiRaf = 0; ctx.clearRect(0, 0, W, H); }
   }
-  cancelAnimationFrame(raf);
   frame();
 }

@@ -59,6 +59,11 @@ export class UI {
       setClose: $("settings-close"),
     };
     this._cb = {};
+    this.safeFirstClick = true; // mirrors the setting; bounds custom mine count
+  }
+
+  _mineCeiling(w, h) {
+    return Math.max(1, w * h - (this.safeFirstClick ? 9 : 1));
   }
 
   bind(callbacks) {
@@ -94,7 +99,7 @@ export class UI {
       if (e.customDlg.returnValue === "start") {
         const cfg = {
           w: +e.inpW.value, h: +e.inpH.value,
-          m: Math.min(+e.inpM.value, e.inpW.value * e.inpH.value - 9),
+          m: Math.min(+e.inpM.value, this._mineCeiling(+e.inpW.value, +e.inpH.value)),
         };
         this._cb.onCustom && this._cb.onCustom(cfg);
       }
@@ -167,9 +172,18 @@ export class UI {
     e.ovTitle.textContent = won ? "You win!" : "Boom.";
     e.ovSub.textContent = won ? `Cleared in ${formatTime(timeMs)}` : "You hit a mine.";
     e.ovBest.classList.toggle("hidden", !(won && isBest));
+    this._prevFocus = document.activeElement;
     e.overlay.classList.remove("hidden");
+    // move focus into the result card so keyboard/SR users land on the action
+    requestAnimationFrame(() => e.ovAgain.focus());
   }
-  hideResult() { this.el.overlay.classList.add("hidden"); }
+  hideResult() {
+    this.el.overlay.classList.add("hidden");
+    const prev = this._prevFocus;
+    this._prevFocus = null;
+    if (prev && prev.focus) prev.focus();
+    else this.el.face.focus();
+  }
 
   /* ---------- custom dialog ---------- */
   openCustom(initial) {
@@ -181,7 +195,7 @@ export class UI {
   _syncCustom() {
     const e = this.el;
     const w = +e.inpW.value, h = +e.inpH.value;
-    const maxMines = Math.max(1, w * h - 9);
+    const maxMines = this._mineCeiling(w, h);
     e.inpM.max = maxMines;
     if (+e.inpM.value > maxMines) e.inpM.value = maxMines;
     const m = +e.inpM.value;
@@ -217,6 +231,7 @@ export class UI {
   openSettings() { this.el.setDlg.showModal(); }
   reflectSettings(s) {
     const e = this.el;
+    this.safeFirstClick = s.safeFirstClick;
     e.setPalette.value = s.palette;
     e.setQuestion.checked = s.question;
     e.setChord.checked = s.chord;

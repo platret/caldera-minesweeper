@@ -47,6 +47,10 @@ test("revealing a mine loses and exposes all mines", () => {
   for (let i = 0; i < e.totalCells; i++) {
     if (isMine(e.state, i)) assert.ok(isRevealed(e.state, i));
   }
+  // revealedCount invariant holds after loss (matches actual revealed cells)
+  let actualRevealed = 0;
+  for (let i = 0; i < e.totalCells; i++) if (isRevealed(e.state, i)) actualRevealed++;
+  assert.equal(e.revealedCount, actualRevealed, "revealedCount must match reality after loss");
 });
 
 test("revealing every safe cell wins (O(1) detection)", () => {

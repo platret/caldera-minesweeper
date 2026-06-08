@@ -72,7 +72,7 @@ export class Input {
     b.addEventListener("pointerdown", (e) => this._onDown(e));
     b.addEventListener("pointermove", (e) => this._onMove(e));
     b.addEventListener("pointerup", (e) => this._onUp(e));
-    b.addEventListener("pointercancel", () => this._cancelPress());
+    b.addEventListener("pointercancel", () => { this._cancelPress(); this._clearPeek(); });
     b.addEventListener("pointerleave", () => this._clearPeek());
 
     b.addEventListener("keydown", (e) => this._onKey(e));

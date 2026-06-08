@@ -71,7 +71,7 @@
         </div>
         <canvas id="confetti" class="confetti" aria-hidden="true"></canvas>
 
-        <div id="overlay" class="overlay hidden" role="dialog" aria-modal="false" aria-labelledby="overlay-title">
+        <div id="overlay" class="overlay hidden" role="dialog" aria-labelledby="overlay-title" aria-describedby="overlay-sub">
           <div class="overlay-card glass">
             <div class="overlay-emoji" id="overlay-emoji" aria-hidden="true">🎉</div>
             <h2 id="overlay-title">You win</h2>
@@ -112,8 +112,11 @@
       </section>
     </main>
 
-    <footer class="app-foot">
-      <span>Left-click reveal · Right-click flag · Double-click chord · <kbd>R</kbd> restart</span>
+    <footer class="app-foot" aria-label="How to play">
+      <span aria-hidden="true">Left-click reveal · Right-click flag · Double-click chord · <kbd>R</kbd> restart</span>
+      <span class="sr-only">Mouse: left-click to reveal, right-click to flag, double-click or middle-click to chord.
+        Touch: tap to reveal, long-press to flag, double-tap to chord.
+        Keyboard: arrow keys or W A S D to move, Space or Enter to reveal, F to flag, C to chord, R to restart.</span>
     </footer>
   </div>
 

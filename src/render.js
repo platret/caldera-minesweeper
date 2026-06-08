@@ -39,19 +39,27 @@ export class Renderer {
 
     const frag = document.createDocumentFragment();
     this.cells = new Array(totalCells);
-    for (let i = 0; i < totalCells; i++) {
-      const x = i % width, y = (i / width) | 0;
-      const btn = document.createElement("div");
-      btn.className = "cell" + (((x + y) & 1) ? " alt" : "");
-      btn.dataset.index = i;
-      btn.dataset.state = "hidden";
-      btn.setAttribute("role", "gridcell");
-      btn.setAttribute("aria-rowindex", y + 1);
-      btn.setAttribute("aria-colindex", x + 1);
-      btn.setAttribute("tabindex", "-1");
-      btn.setAttribute("aria-label", this.label(i));
-      this.cells[i] = btn;
-      frag.appendChild(btn);
+    // Proper WAI-ARIA grid: grid > row > gridcell. Rows use display:contents
+    // so the CSS grid on .board still lays the cells out directly.
+    for (let y = 0; y < height; y++) {
+      const row = document.createElement("div");
+      row.className = "cell-row";
+      row.setAttribute("role", "row");
+      row.setAttribute("aria-rowindex", y + 1);
+      for (let x = 0; x < width; x++) {
+        const i = y * width + x;
+        const btn = document.createElement("div");
+        btn.className = "cell" + (((x + y) & 1) ? " alt" : "");
+        btn.dataset.index = i;
+        btn.dataset.state = "hidden";
+        btn.setAttribute("role", "gridcell");
+        btn.setAttribute("aria-colindex", x + 1);
+        btn.setAttribute("tabindex", "-1");
+        btn.setAttribute("aria-label", this.label(i));
+        this.cells[i] = btn;
+        row.appendChild(btn);
+      }
+      frag.appendChild(row);
     }
     this.board.replaceChildren(frag);
     this.cursor = -1;

@@ -212,6 +212,7 @@
   background: transparent;
   color: var(--text);
   max-width: min(92vw, 420px);
+  max-height: min(90vh, calc(100vh - 32px));
 }
 .modal::backdrop {
   background: rgba(10, 8, 6, 0.45);
@@ -227,6 +228,8 @@
   display: flex;
   flex-direction: column;
   gap: 16px;
+  max-height: min(90vh, calc(100vh - 32px));
+  overflow-y: auto;
 }
 .modal-title { font-size: 18px; }
 
@@ -289,6 +292,7 @@ input[type="range"]::-moz-range-thumb {
 }
 .btn:hover { transform: translateY(-1px); }
 .btn:active { transform: scale(0.97); }
+.btn:focus-visible { outline: 2.5px solid var(--focus); outline-offset: 2px; }
 .btn-primary { background: var(--accent); color: #fff; box-shadow: 0 4px 14px -4px var(--accent); }
 .btn-primary:hover { filter: brightness(1.05); }
 .btn-ghost { background: var(--glass); border: 1px solid var(--hairline); color: var(--text); }

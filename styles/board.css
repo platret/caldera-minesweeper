@@ -29,6 +29,9 @@
 }
 .board:focus-visible { outline: 2.5px solid var(--focus); outline-offset: 6px; }
 
+/* ARIA row wrappers don't participate in layout — cells stay grid items */
+.cell-row { display: contents; }
+
 /* ---- the cell ---- */
 .cell {
   position: relative;

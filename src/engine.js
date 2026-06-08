@@ -234,10 +234,11 @@ export class Engine {
     const s = this.state;
     setRevealed(s, struck);
     setExploded(s, struck);
+    this.revealedCount++;
     const changed = [struck];
     for (let i = 0; i < this.totalCells; i++) {
       if (i === struck) continue;
-      if (isMine(s, i) && !isFlagged(s, i)) { setRevealed(s, i); changed.push(i); }
+      if (isMine(s, i) && !isFlagged(s, i)) { setRevealed(s, i); this.revealedCount++; changed.push(i); }
       else if (!isMine(s, i) && isFlagged(s, i)) { setWrongFlag(s, i); changed.push(i); }
     }
     this.status = "lost";
