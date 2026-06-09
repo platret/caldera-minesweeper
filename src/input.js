@@ -168,6 +168,9 @@ export class Input {
     const k = e.key.toLowerCase();
 
     if (k === "r") { e.preventDefault(); this.h.restart(); return; }
+    if (k === "u") { e.preventDefault(); this.h.undo && this.h.undo(); return; }
+    if (k === "+" || k === "=") { e.preventDefault(); this.h.zoomIn && this.h.zoomIn(); return; }
+    if (k === "-" || k === "_") { e.preventDefault(); this.h.zoomOut && this.h.zoomOut(); return; }
 
     // don't steal Space/Enter from a focused control that isn't a cell
     const onCell = !!(ae && ae.classList && ae.classList.contains("cell"));
@@ -190,6 +193,9 @@ export class Input {
       case "enter": case " ": e.preventDefault(); this.h.reveal(target); return;
       case "f": e.preventDefault(); this.h.flag(target); return;
       case "c": e.preventDefault(); this.h.chord(target); return;
+      case "1": case "2": case "3": case "4":
+      case "5": case "6": case "7": case "8":
+        e.preventDefault(); this.h.note && this.h.note(target, Number(k)); return;
       default: return;
     }
     e.preventDefault();

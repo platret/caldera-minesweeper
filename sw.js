@@ -3,7 +3,7 @@
    Bump CACHE when shipping changes to invalidate old assets.
    ============================================================ */
 
-const CACHE = "caldera-v3";
+const CACHE = "caldera-v4";
 const ASSETS = [
   "./",
   "./index.html",
@@ -15,6 +15,7 @@ const ASSETS = [
   "./styles/layout.css",
   "./styles/board.css",
   "./styles/animations.css",
+  "./styles/extras.css",
   "./src/main.js",
   "./src/engine.js",
   "./src/board.js",
@@ -27,6 +28,12 @@ const ASSETS = [
   "./src/solver.js",
   "./src/confetti.js",
   "./src/ui.js",
+  "./src/metrics.js",
+  "./src/generate.js",
+  "./src/daily.js",
+  "./src/sound.js",
+  "./src/achievements.js",
+  "./src/share.js",
 ];
 
 self.addEventListener("install", (e) => {

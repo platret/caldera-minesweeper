@@ -13,6 +13,9 @@ export const DEFAULTS = Object.freeze({
   safeFirstClick: true,
   animations: true,
   haptics: true,
+  sound: false,          // synthesized sound effects (off by default)
+  noGuess: false,        // generate boards solvable without guessing
+  contrast: false,       // high-contrast / color-blind-safe palette
   flagMode: false,       // mobile tap-to-flag
 });
 

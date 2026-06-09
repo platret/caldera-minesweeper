@@ -3,6 +3,11 @@
    Instantiates engine + renderer + input + timer + ui, wires the
    event flow, restores settings / in-progress game, and registers
    the service worker for offline play.
+
+   Also drives the layered extras: always-seeded boards (so games
+   are replayable/shareable), no-guess generation, the daily
+   challenge, undo, pencil notes, 3BV metrics, sound, achievements,
+   share + replay.
    ============================================================ */
 
 import { Engine } from "./engine.js";
@@ -17,6 +22,12 @@ import * as solver from "./solver.js";
 import { burst } from "./confetti.js";
 import { formatTime } from "./timer.js";
 import * as leaderboard from "./leaderboard.js";
+import { compute3BV, efficiency, threeBVPerSecond } from "./metrics.js";
+import { makeNoGuessGenerator } from "./generate.js";
+import * as daily from "./daily.js";
+import { setEnabled as setSound, sfx } from "./sound.js";
+import * as achievements from "./achievements.js";
+import { buildShare, copyText } from "./share.js";
 
 const live = document.getElementById("live");
 const wellEl = document.querySelector(".well");
@@ -34,6 +45,12 @@ let customConfig = storage.get("customConfig", { w: 16, h: 16, m: 40 });
 let _pendingWin = null; // {difficulty, timeMs} awaiting a name before submit
 if (!DIFFICULTIES[currentDiff] && currentDiff !== "custom") currentDiff = "beginner";
 
+/* per-game run context (seed, daily flag, move log for replay, metrics) */
+let run = freshRun();
+function freshRun() {
+  return { seed: 0, daily: false, dailyKey: "", noGuess: false, moves: [], clicks: 0, threeBV: 0 };
+}
+
 function presetConfig(diff) {
   const d = DIFFICULTIES[diff] || DIFFICULTIES.beginner;
   return { width: d.w, height: d.h, mines: d.m };
@@ -43,6 +60,8 @@ function reducedMotion() {
   return !settings.animations ||
     (window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches);
 }
+
+function newSeed() { return (Math.floor(Math.random() * 0xffffffff)) >>> 0; }
 
 /* ---------- theme ---------- */
 function prefersDark() {
@@ -56,20 +75,42 @@ function resolveTheme() {
 function applyTheme() {
   document.documentElement.setAttribute("data-theme", resolveTheme());
   document.documentElement.setAttribute("data-anim", settings.animations ? "on" : "off");
+  document.documentElement.setAttribute("data-contrast", settings.contrast ? "high" : "normal");
 }
 
 /* ---------- difficulty key (for stats/best) ---------- */
 function diffKey() {
+  if (run.daily) return daily.dailyDiffKey(run.dailyKey);
   if (currentDiff === "custom") return `custom-${engine.width}x${engine.height}-${engine.mineCount}`;
   return currentDiff;
 }
 
 /* ---------- new game ---------- */
-function newGame() {
-  const cfg = currentDiff === "custom"
-    ? { width: customConfig.w, height: customConfig.h, mines: customConfig.m }
-    : presetConfig(currentDiff);
-  engine.reset({ ...cfg, safeFirstClick: settings.safeFirstClick, allowQuestion: settings.question });
+function newGame(opts = {}) {
+  run = freshRun();
+  run.daily = !!opts.daily;
+  run.noGuess = !run.daily && !!settings.noGuess;
+
+  let cfg;
+  const resetOpts = { safeFirstClick: settings.safeFirstClick, allowQuestion: settings.question };
+
+  if (run.daily) {
+    run.dailyKey = daily.todayKey();
+    run.seed = daily.seedForDate(run.dailyKey);
+    cfg = { width: daily.DAILY_CONFIG.w, height: daily.DAILY_CONFIG.h, mines: daily.DAILY_CONFIG.m };
+    resetOpts.seed = run.seed;
+    resetOpts.safeFirstClick = true;
+    resetOpts.prePlaceSafe = daily.dailySafeIndex();
+  } else {
+    run.seed = newSeed();
+    cfg = currentDiff === "custom"
+      ? { width: customConfig.w, height: customConfig.h, mines: customConfig.m }
+      : presetConfig(currentDiff);
+    resetOpts.seed = run.seed;
+    if (run.noGuess) resetOpts.mineGenerator = makeNoGuessGenerator();
+  }
+
+  engine.reset({ ...cfg, ...resetOpts });
   renderer.build(engine);
   timer.reset();
   ui.setMineCount(engine.minesRemaining);
@@ -77,32 +118,49 @@ function newGame() {
   ui.setTimer(0);
   ui.hideResult();
   ui.clearTimerRecord();
-  ui.setActiveDifficulty(currentDiff);
+  ui.setActiveDifficulty(run.daily ? "daily" : currentDiff);
   ui.setBest(stats.bestFor(diffKey()));
+  ui.setUndo(false);
+  ui.setModeBadge(run);
   wellEl.classList.remove("lost", "win-glow");
   clearSavedGame();
-  storage.set("lastDiff", currentDiff);
+  if (!run.daily) storage.set("lastDiff", currentDiff);
 }
 
 /* ---------- the action funnel ---------- */
-function handle(result) {
+function handle(result, opts = {}) {
   if (!result || result.kind === "noop") return;
   renderer.apply(result, { animate: !reducedMotion() });
   ui.setMineCount(engine.minesRemaining);
+  ui.setUndo(engine.canUndo && engine.status === "playing");
 
   if (result.started) {
     ui.setFace("playing");
     timer.start(() => engine.elapsedMs());
+    run.threeBV = compute3BV(engine); // board is placed now
   }
+  if (!opts.replay) playSound(result);
+
   if (result.ended === "won") return onWin();
   if (result.ended === "lost") return onLose(result.origin);
   if (engine.status === "playing") saveGame();
+}
+
+function playSound(result) {
+  switch (result.kind) {
+    case "reveal": (result.changed.length > 3 ? sfx.cascade : sfx.reveal)(); break;
+    case "flag": sfx.flag(); break;
+    case "note": sfx.flag(); break;
+    case "win": sfx.win(); break;
+    case "lose": sfx.explode(); break;
+  }
 }
 
 function onWin() {
   timer.stop();
   ui.setMineCount(0);
   ui.setFace("won");
+  ui.setUndo(false);
   const timeMs = engine.elapsedMs();
   const dk = diffKey();
   const isBest = stats.record(dk, { won: true, timeMs, assisted: engine.assisted });
@@ -112,29 +170,52 @@ function onWin() {
     burst(confettiEl, { reduced: false, colors: themedConfetti() });
   }
   if (isBest && !engine.assisted) ui.pulseTimer();
+
+  const ctx = winContext(true, timeMs);
+  const fresh = achievements.evaluate(ctx);
   announce(`You win! Cleared in ${formatTime(timeMs)}.` + (isBest ? " New best time." : ""));
+  saveReplay(true, timeMs);
   clearSavedGame();
   ui.refreshStats(stats.all());
 
-  // Online leaderboard: only ranked presets, never assisted runs.
-  const eligible = leaderboard.isConfigured() && !!DIFFICULTIES[currentDiff] && !engine.assisted;
-  const lbDiff = currentDiff;
+  // Online leaderboard: ranked presets + daily, never assisted runs.
+  const lbEligible = leaderboard.isConfigured() && !engine.assisted &&
+    (!!DIFFICULTIES[currentDiff] || run.daily) && !isCustomRun();
+  const lbDiff = run.daily ? daily.dailyDiffKey(run.dailyKey) : currentDiff;
+  const lbLabel = run.daily ? `Daily ${run.dailyKey}` : ((DIFFICULTIES[currentDiff] || {}).label || currentDiff);
+
   setTimeout(() => {
-    ui.showResult({ won: true, timeMs, isBest: isBest && !engine.assisted });
-    if (!eligible) return;
-    if (settings.name) submitWin(lbDiff, timeMs, settings.name);
-    else { _pendingWin = { difficulty: lbDiff, timeMs }; ui.showOverlaySubmit(""); }
+    ui.showResult({ won: true, timeMs, isBest: isBest && !engine.assisted, metrics: ctx });
+    flushAchievements(fresh);
+    if (!lbEligible) return;
+    if (settings.name) submitWin(lbDiff, timeMs, settings.name, lbLabel);
+    else { _pendingWin = { difficulty: lbDiff, timeMs, label: lbLabel }; ui.showOverlaySubmit(""); }
   }, 650);
 }
 
-async function submitWin(difficulty, timeMs, name) {
+function isCustomRun() { return !run.daily && currentDiff === "custom"; }
+
+function winContext(won, timeMs) {
+  const s = stats.all();
+  const totalWins = Object.values(s.wins || {}).reduce((a, b) => a + b, 0);
+  const eff = efficiency(run.threeBV, run.clicks);
+  const bvps = threeBVPerSecond(run.threeBV, timeMs);
+  return {
+    won, difficulty: currentDiff, timeMs, assisted: engine.assisted,
+    noGuess: run.noGuess, daily: run.daily, dailyKey: run.dailyKey,
+    title: run.daily ? `Daily ${run.dailyKey}` : (DIFFICULTIES[currentDiff] || {}).label || "Custom",
+    threeBV: run.threeBV, threeBVps: bvps, efficiency: eff,
+    streak: s.streak || 0, totalWins,
+  };
+}
+
+async function submitWin(difficulty, timeMs, name, label) {
   const res = await leaderboard.submitScore({ name, difficulty, timeMs });
   if (!res.ok) {
     ui.setOverlayRank(res.offline ? "" : "Couldn't reach the leaderboard.");
     return;
   }
   const rank = await leaderboard.rankFor(difficulty, timeMs);
-  const label = (DIFFICULTIES[difficulty] || {}).label || difficulty;
   ui.setOverlayRank(rank ? `#${rank} on the ${label} leaderboard 🏆` : `Submitted to the ${label} leaderboard 🏆`);
 }
 
@@ -147,13 +228,20 @@ async function loadLeaderboard(diff) {
 function onLose() {
   timer.stop();
   ui.setFace("lost");
-  if (!reducedMotion()) wellEl.classList.add("lost");
-  else wellEl.classList.add("lost");
+  ui.setUndo(engine.canUndo);
+  wellEl.classList.add("lost");
   stats.record(diffKey(), { won: false, timeMs: engine.elapsedMs(), assisted: engine.assisted });
   announce("You hit a mine. Game over.");
+  saveReplay(false, engine.elapsedMs());
   setTimeout(() => ui.showResult({ won: false }), 600);
   clearSavedGame();
   ui.refreshStats(stats.all());
+}
+
+function flushAchievements(fresh) {
+  if (!fresh || !fresh.length) return;
+  sfx.achievement();
+  ui.toastAchievements(fresh);
 }
 
 function themedConfetti() {
@@ -163,20 +251,36 @@ function themedConfetti() {
 
 /* ---------- input handlers ---------- */
 const handlers = {
-  reveal(i) { handle(engine.reveal(i)); },
+  reveal(i) {
+    if (replaying) return;
+    const r = engine.reveal(i);
+    if (r.kind !== "noop") { run.moves.push({ a: "r", i, t: rt() }); run.clicks++; }
+    handle(r);
+  },
   flag(i) {
+    if (replaying) return;
     const r = engine.toggleFlag(i);
-    if (r.kind !== "noop") { handle(r); maybeAnnounceFlag(i); }
+    if (r.kind !== "noop") { run.moves.push({ a: "f", i, t: rt() }); handle(r); maybeAnnounceFlag(i); }
   },
   chord(i) {
-    if (!settings.chord) return;
-    handle(engine.chord(i));
+    if (replaying || !settings.chord) return;
+    const r = engine.chord(i);
+    if (r.kind !== "noop") { run.moves.push({ a: "c", i, t: rt() }); run.clicks++; }
+    handle(r);
   },
+  note(i, digit) {
+    if (replaying) return;
+    const r = engine.setNote(i, digit);
+    if (r.kind !== "noop") { run.moves.push({ a: "n", i, d: digit, t: rt() }); handle(r); }
+  },
+  undo() { doUndo(); },
+  zoomIn() { setZoom(+0.15); },
+  zoomOut() { setZoom(-0.15); },
   restart() { newGame(); },
 };
+function rt() { return Math.round(engine.elapsedMs()); }
 
 function maybeAnnounceFlag(i) {
-  // light, throttled SR feedback
   announce(`${engine.minesRemaining} mines remaining`);
 }
 
@@ -193,14 +297,32 @@ window.addEventListener("pointerup", () => {
   else if (engine.status === "idle") ui.setFace("idle");
 });
 
+/* ---------- undo ---------- */
+function doUndo() {
+  if (replaying) return;
+  if (engine.status === "won") return;
+  const changed = engine.undo();
+  if (!changed) return;
+  if (engine.status !== "lost") wellEl.classList.remove("lost");
+  if (engine.status === "playing") { ui.setFace("playing"); timer.start(() => engine.elapsedMs()); }
+  else if (engine.status === "idle") { ui.setFace("idle"); timer.reset(); }
+  ui.hideResult();
+  for (const i of changed) renderer.paint(renderer.cells[i], i);
+  ui.setMineCount(engine.minesRemaining);
+  ui.setUndo(engine.canUndo);
+  ui.setModeBadge(run); // assisted marker
+  run.moves.push({ a: "u", t: rt() });
+  announce("Undid last move.");
+  if (engine.status === "playing") saveGame();
+}
+
 /* ---------- hint ---------- */
 function doHint() {
-  if (engine.status === "won" || engine.status === "lost") return;
+  if (engine.status === "won" || engine.status === "lost" || replaying) return;
   if (!engine.firstClickDone) {
-    // free safe start: open the center
     const center = engine.idx((engine.width / 2) | 0, (engine.height / 2) | 0);
     engine.assisted = true;
-    handle(engine.reveal(center));
+    handlers.reveal(center);
     return;
   }
   const safe = solver.hint(engine);
@@ -210,9 +332,10 @@ function doHint() {
     return;
   }
   engine.assisted = true;
+  ui.setModeBadge(run);
   const cell = renderer.cells[safe];
   cell.classList.add("cursor");
-  handle(engine.reveal(safe));
+  handlers.reveal(safe);
 }
 function flashHintEmpty() {
   ui.el.hint.animate(
@@ -221,9 +344,96 @@ function flashHintEmpty() {
   );
 }
 
+/* ---------- share ---------- */
+async function doShare() {
+  const last = storage.get("lastGame", null);
+  const ctx = last ? last.ctx : winContext(engine.status === "won", engine.elapsedMs());
+  const text = buildShare(ctx, engine);
+  const ok = await copyText(text);
+  ui.flashShare(ok ? "Copied to clipboard!" : "Couldn't copy.");
+  announce(ok ? "Result copied to clipboard." : "Copy failed.");
+}
+
+/* ---------- replay ---------- */
+let replaying = false;
+let replayTimers = [];
+
+function saveReplay(won, timeMs) {
+  storage.set("lastGame", {
+    seed: run.seed, daily: run.daily, dailyKey: run.dailyKey, noGuess: run.noGuess,
+    diff: currentDiff, custom: customConfig, moves: run.moves,
+    ctx: winContext(won, timeMs),
+  });
+}
+
+function stopReplay() {
+  replaying = false;
+  replayTimers.forEach((t) => clearTimeout(t));
+  replayTimers = [];
+  wellEl.classList.remove("replaying");
+}
+
+function doReplay() {
+  const last = storage.get("lastGame", null);
+  if (!last || !last.moves || !last.moves.length) { announce("No game to replay yet."); return; }
+  stopReplay();
+  ui.hideResult();
+
+  // rebuild the exact same board
+  const resetOpts = { safeFirstClick: settings.safeFirstClick, allowQuestion: settings.question, seed: last.seed };
+  let cfg;
+  if (last.daily) {
+    cfg = { width: daily.DAILY_CONFIG.w, height: daily.DAILY_CONFIG.h, mines: daily.DAILY_CONFIG.m };
+    resetOpts.safeFirstClick = true;
+    resetOpts.prePlaceSafe = daily.dailySafeIndex();
+  } else {
+    cfg = last.diff === "custom"
+      ? { width: last.custom.w, height: last.custom.h, mines: last.custom.m }
+      : presetConfig(last.diff);
+    if (last.noGuess) resetOpts.mineGenerator = makeNoGuessGenerator();
+  }
+  engine.reset({ ...cfg, ...resetOpts });
+  renderer.build(engine);
+  timer.reset();
+  ui.setMineCount(engine.minesRemaining);
+  ui.setFace("playing");
+  wellEl.classList.remove("lost", "win-glow");
+  wellEl.classList.add("replaying");
+  replaying = true;
+  announce("Replaying last game.");
+
+  const moves = last.moves;
+  let prevT = 0;
+  let acc = 0;
+  moves.forEach((mv, k) => {
+    const dt = Math.max(60, Math.min(420, (mv.t || 0) - prevT));
+    prevT = mv.t || prevT;
+    acc += k === 0 ? 200 : dt;
+    replayTimers.push(setTimeout(() => {
+      if (!replaying) return;
+      stepReplay(mv);
+      if (k === moves.length - 1) { replaying = false; wellEl.classList.remove("replaying"); }
+    }, acc));
+  });
+}
+
+function stepReplay(mv) {
+  let r = null;
+  if (mv.a === "r") r = engine.reveal(mv.i);
+  else if (mv.a === "f") r = engine.toggleFlag(mv.i);
+  else if (mv.a === "c") r = engine.chord(mv.i);
+  else if (mv.a === "n") r = engine.setNote(mv.i, mv.d);
+  else if (mv.a === "u") { const ch = engine.undo(); if (ch) ch.forEach((i) => renderer.paint(renderer.cells[i], i)); ui.setMineCount(engine.minesRemaining); return; }
+  if (r && r.kind !== "noop") {
+    if (r.started) { timer.start(() => engine.elapsedMs()); }
+    handle(r, { replay: true });
+    playSound(r);
+  }
+}
+
 /* ---------- persistence of in-progress game ---------- */
 function saveGame() {
-  storage.set("savedGame", { snap: engine.snapshot(), diff: currentDiff, custom: customConfig });
+  storage.set("savedGame", { snap: engine.snapshot(), diff: currentDiff, custom: customConfig, run });
 }
 function clearSavedGame() { storage.set("savedGame", null); }
 
@@ -234,25 +444,22 @@ function tryRestore() {
     engine = Engine.fromSnapshot(saved.snap);
     currentDiff = saved.diff;
     customConfig = saved.custom || customConfig;
+    if (saved.run) run = { ...freshRun(), ...saved.run };
+    run.threeBV = compute3BV(engine);
     renderer.build(engine);
     renderer.repaintAll();
     ui.setMineCount(engine.minesRemaining);
-    ui.setActiveDifficulty(currentDiff);
+    ui.setActiveDifficulty(run.daily ? "daily" : currentDiff);
     ui.setBest(stats.bestFor(diffKey()));
     ui.setFace("playing");
+    ui.setUndo(engine.canUndo);
+    ui.setModeBadge(run);
     timer.start(() => engine.elapsedMs());
-    // input/handlers close over the original `engine` binding via module scope:
-    rebindEngineRefs();
     return true;
   } catch {
     return false;
   }
 }
-// handlers/input read `engine` from module scope through the funcs above,
-// but `input` captured `renderer` (stable). engine is referenced live in
-// closures via the module-level `let engine`, so no rebinding needed for
-// handlers. This hook exists for clarity/future use.
-function rebindEngineRefs() { /* engine is module-scoped; closures see updates */ }
 
 /* ---------- live region ---------- */
 let announceTimer = 0;
@@ -261,27 +468,43 @@ function announce(msg) {
   announceTimer = setTimeout(() => { live.textContent = msg; }, 120);
 }
 
+/* ---------- zoom ---------- */
+function setZoom(delta, absolute) {
+  renderer.setUserZoom(absolute != null ? absolute : renderer.userZoom + delta);
+  ui.setZoomLabel(renderer.userZoom);
+}
+
 /* ---------- wire UI ---------- */
 ui.bind({
-  onRestart: () => newGame(),
-  onDifficulty: (diff) => { currentDiff = diff; newGame(); },
+  onRestart: () => { stopReplay(); newGame(); },
+  onDifficulty: (diff) => { stopReplay(); currentDiff = diff; newGame(); },
+  onDaily: () => { stopReplay(); newGame({ daily: true }); },
   onCustom: (cfg) => {
+    stopReplay();
     customConfig = cfg;
     storage.set("customConfig", cfg);
     currentDiff = "custom";
     newGame();
   },
   onHint: doHint,
+  onUndo: doUndo,
+  onShare: doShare,
+  onReplay: doReplay,
+  onZoomIn: () => setZoom(+0.15),
+  onZoomOut: () => setZoom(-0.15),
+  onZoomReset: () => setZoom(0, 1),
   onThemeToggle: () => {
-    // cycle system → dark → light → system so OS-follow stays reachable
     settings.theme = settings.theme === "system" ? "dark"
       : settings.theme === "dark" ? "light" : "system";
     applyTheme();
     settingsStore.save(settings);
     announce(`Theme: ${settings.theme}`);
   },
-  onOpenStats: () => ui.openStats(stats.all()),
-  onResetStats: () => { stats.reset(); ui.refreshStats(stats.all()); ui.setBest(stats.bestFor(diffKey())); },
+  onOpenStats: () => ui.openStats(stats.all(), achievements.unlockedSet()),
+  onResetStats: () => {
+    stats.reset(); achievements.reset();
+    ui.refreshStats(stats.all()); ui.setBest(stats.bestFor(diffKey()));
+  },
   onOpenLeaderboard: () => {
     const d = DIFFICULTIES[currentDiff] ? currentDiff : "beginner";
     ui.openLeaderboard(d);
@@ -292,14 +515,15 @@ ui.bind({
     const clean = (name || "").trim().slice(0, 20);
     if (clean) { settings.name = clean; settingsStore.save(settings); ui.reflectSettings(settings); }
     if (_pendingWin) {
-      submitWin(_pendingWin.difficulty, _pendingWin.timeMs, clean || "Anonymous");
+      submitWin(_pendingWin.difficulty, _pendingWin.timeMs, clean || "Anonymous", _pendingWin.label);
       _pendingWin = null;
     }
   },
   onSetting: (key, val) => {
     settings[key] = val;
     settingsStore.save(settings);
-    if (key === "palette" || key === "animations") applyTheme();
+    if (key === "palette" || key === "animations" || key === "contrast") applyTheme();
+    if (key === "sound") setSound(val);
     if (key === "safeFirstClick") { ui.safeFirstClick = val; if (!engine.firstClickDone) engine.safeFirstClick = val; }
     if (key === "question") engine.allowQuestion = val;
   },
@@ -315,7 +539,9 @@ window.addEventListener("resize", () => renderer.fit());
 
 /* ---------- boot ---------- */
 applyTheme();
+setSound(settings.sound);
 ui.reflectSettings(settings);
+ui.setZoomLabel(renderer.userZoom);
 if (!tryRestore()) newGame();
 
 /* service worker (offline) — relative scope, GitHub-Pages friendly */

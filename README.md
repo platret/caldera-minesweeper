@@ -13,7 +13,19 @@ hostable anywhere static (GitHub Pages included).
 - 🛡️ **Guaranteed-safe first click** — mines are placed *after* your first reveal,
   so you never lose on move one (and the first click always opens a region).
 - 🧠 **Real game feel** — chording (double-click / middle-click), flagging,
-  question marks, a hint solver that only ever reveals *provably* safe cells.
+  question marks, **pencil marks** (number keys 1–8), a hint solver that only
+  ever reveals *provably* safe cells, and **undo** (`U`) to rewind a misstep.
+- 🛟 **No-guess boards** — an optional mode that generates only boards solvable
+  by pure logic, so a careful player never has to guess (validated with the
+  same deduction engine the Hint button uses).
+- 📅 **Daily Challenge** — one fixed, pre-placed board per calendar day,
+  identical for everyone and ranked on its own leaderboard.
+- 📊 **Speedrun metrics** — 3BV, 3BV/s and click efficiency on every win, plus
+  a **Wordle-style share** (copy a result card + minefield silhouette) and a
+  **replay** of your last game.
+- 🔊 **Synthesized sound** & 🏅 **achievements** — weightless Web-Audio cues
+  (no asset files) and unlockable badges with toasts.
+- 🌈 **High-contrast / color-blind-safe** palette and **board zoom** (`+`/`−`).
 - 🎨 **Premium, tactile UI** — recessed "well", soft-touch keycaps, a molten-amber
   accent that only ignites at moments of tension. Light, Dark, Slate & Classic
   palettes with smooth theme switching.
@@ -38,6 +50,9 @@ hostable anywhere static (GitHub Pages included).
 | Reveal | Left-click | Tap | Space / Enter |
 | Flag | Right-click | Long-press | `F` |
 | Chord (auto-reveal around a satisfied number) | Double- or middle-click | Double-tap | `C` |
+| Pencil mark (candidate digit) | — | — | `1`–`8` |
+| Undo last move (marks the run assisted) | Undo button | Undo button | `U` |
+| Zoom the board | Zoom pill | Zoom pill | `+` / `−` |
 | Move cursor | — | — | Arrows / WASD |
 | New game | Click the face | Tap the face | `R` |
 
@@ -100,6 +115,7 @@ styles/
   layout.css          app shell, HUD, toolbar, dialogs
   board.css           the well + keycap/recessed cells + glyphs
   animations.css      GPU keyframes (reveal ripple, flag pop, win wave…)
+  extras.css          undo/daily/zoom/notes/toasts/achievements/high-contrast
 src/
   board.js            packed bitflag helpers + seeded PRNG
   engine.js           PURE game logic (typed arrays, first-click-safe,
@@ -111,9 +127,15 @@ src/
   settings.js         settings model + persistence
   stats.js            best times / win-rate / streaks
   solver.js           constraint deduction for the Hint feature
+  generate.js         no-guess board generation (rejection-sampled solve)
+  metrics.js          3BV + efficiency / 3BV-per-second
+  daily.js            date-seeded Daily Challenge board
+  sound.js            Web-Audio synthesized sound effects (no assets)
+  achievements.js     unlockable badges (persisted)
+  share.js            Wordle-style result text + clipboard
   confetti.js         one-shot win burst
   leaderboard.js      optional Supabase client (lazy-loaded, RLS-protected)
-  ui.js               chrome wiring (HUD, dialogs, theme, overlay)
+  ui.js               chrome wiring (HUD, dialogs, theme, overlay, toasts)
   main.js             composition root
 config.js             runtime config (env-injected at build time)
 vercel.json           Vercel build command + headers

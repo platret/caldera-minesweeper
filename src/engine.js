@@ -7,6 +7,12 @@
    Win is O(1): revealedCount === width*height - mineCount.
    Every mutating method returns a result describing what changed
    so the renderer can do O(changed) DOM updates.
+
+   Extras layered on the pure core (all opt-in, all deterministic
+   when a seed is supplied):
+     - undo()           rewind the last reveal/flag/chord
+     - pencil notes     candidate digit on a covered cell
+     - layout injection  setLayout()/mineGenerator (daily + no-guess)
    ============================================================ */
 
 import {
@@ -18,13 +24,18 @@ import {
 } from "./board.js";
 
 const NOOP = Object.freeze({ changed: [], origin: -1, started: false, ended: null, kind: "noop" });
+const HISTORY_CAP = 240;
 
 export class Engine {
   constructor(config = {}) {
     this.reset(config);
   }
 
-  reset({ width = 9, height = 9, mines = 10, seed = null, safeFirstClick = true, allowQuestion = false } = {}) {
+  reset({
+    width = 9, height = 9, mines = 10, seed = null,
+    safeFirstClick = true, allowQuestion = false,
+    mineGenerator = null, prePlaceSafe = null,
+  } = {}) {
     width = clampInt(width, 2, 200);
     height = clampInt(height, 2, 200);
     const cells = width * height;
@@ -37,9 +48,11 @@ export class Engine {
     this.mineCount = mines;
     this.safeFirstClick = safeFirstClick;
     this.allowQuestion = allowQuestion;
+    this.mineGenerator = mineGenerator; // (engine, safeIdx) => number[] | null
 
     this.adjacency = new Uint8Array(cells);
     this.state = new Uint8Array(cells);
+    this.notes = new Uint8Array(cells); // 0 = none, 1..8 = pencil candidate digit
     this._stack = new Int32Array(cells);
 
     this.revealedCount = 0;
@@ -50,7 +63,17 @@ export class Engine {
     this.endTime = 0;
     this.seed = seed;
     this.assisted = false;
+    this._placed = false;
+    this._history = [];
     this._rand = seed == null ? Math.random : mulberry32(seed >>> 0);
+
+    // Pre-placed, click-independent layout (daily challenge): the board is
+    // identical for everyone, placement does NOT defer to the first click,
+    // so the canonical safe opening is the only first-click guarantee.
+    if (prePlaceSafe != null) {
+      this._placeMines(clampInt(prePlaceSafe, 0, cells - 1));
+      this._placed = true;
+    }
     return this;
   }
 
@@ -80,9 +103,22 @@ export class Engine {
     return out;
   }
 
-  /* ----- deferred, first-click-safe mine placement ----- */
+  /* ----- mine placement ----- */
+  /** Build the candidate pool around a safe cell and place mines into it.
+      Uses an injected generator (no-guess) when present, else a partial
+      Fisher–Yates over the non-excluded cells (no rejection sampling). */
   _placeMines(safeIdx) {
     const { state, totalCells } = this;
+
+    if (this.mineGenerator) {
+      const layout = this.mineGenerator(this, safeIdx);
+      if (layout && layout.length === this.mineCount) {
+        this._applyLayout(layout);
+        return;
+      }
+      // generator gave up — fall through to a plain random board.
+    }
+
     const forbidden = new Set([safeIdx]);
     if (this.safeFirstClick) {
       for (const n of this.neighbors(safeIdx)) forbidden.add(n);
@@ -94,7 +130,6 @@ export class Engine {
       forbidden.add(safeIdx);
     }
 
-    // candidate pool, then partial Fisher–Yates (no rejection sampling).
     const pool = [];
     for (let i = 0; i < totalCells; i++) if (!forbidden.has(i)) pool.push(i);
     for (let k = 0; k < this.mineCount; k++) {
@@ -102,11 +137,23 @@ export class Engine {
       const tmp = pool[k]; pool[k] = pool[j]; pool[j] = tmp;
       setMine(state, pool[k]);
     }
+    this._recomputeAdjacency();
+  }
 
-    // adjacency: O(mines*8)
+  /** Place an explicit set of mine indices (daily / generator output). */
+  _applyLayout(indices) {
+    const s = this.state;
+    for (const i of indices) setMine(s, i);
+    this._recomputeAdjacency();
+  }
+
+  _recomputeAdjacency() {
     const adj = this.adjacency;
-    for (let k = 0; k < this.mineCount; k++) {
-      for (const n of this.neighbors(pool[k])) adj[n]++;
+    adj.fill(0);
+    const s = this.state;
+    for (let i = 0; i < this.totalCells; i++) {
+      if (!isMine(s, i)) continue;
+      for (const n of this.neighbors(i)) adj[n]++;
     }
   }
 
@@ -120,12 +167,13 @@ export class Engine {
 
     let started = false;
     if (!this.firstClickDone) {
-      this._placeMines(i);
+      if (!this._placed) this._placeMines(i);
       this.firstClickDone = true;
       this.status = "playing";
       this.startTime = now();
       started = true;
     }
+    this._pushHistory();
 
     if (isMine(s, i)) {
       const changed = this._lose(i);
@@ -153,6 +201,7 @@ export class Engine {
     const open = (i) => {
       setRevealed(s, i);
       if (isQuestion(s, i)) clearQuestion(s, i);
+      if (this.notes[i]) this.notes[i] = 0;
       this.revealedCount++;
       changed.push(i);
       if (adj[i] === 0) stack[sp++] = i;
@@ -184,6 +233,8 @@ export class Engine {
     for (const n of ns) if (isFlagged(s, n)) flagged++;
     if (flagged !== adj) return NOOP;
 
+    this._pushHistory();
+
     // any non-flagged mine under the chord → loss
     let hitMine = -1;
     for (const n of ns) {
@@ -198,7 +249,7 @@ export class Engine {
     for (const n of ns) {
       if (!isFlagged(s, n) && !isRevealed(s, n)) changed = changed.concat(this._flood(n));
     }
-    if (changed.length === 0) return NOOP;
+    if (changed.length === 0) { this._history.pop(); return NOOP; }
     if (this.revealedCount === this.safeCells) {
       const more = this._win();
       return { changed: changed.concat(more), origin: i, started: false, ended: "won", kind: "win" };
@@ -217,6 +268,9 @@ export class Engine {
     let started = false;
     if (this.status === "idle") { this.status = "playing"; started = true; this.startTime = now(); this.firstClickDone = false; }
 
+    this._pushHistory();
+    if (this.notes[i]) this.notes[i] = 0;
+
     if (isFlagged(s, i)) {
       clearFlagged(s, i);
       this.flagCount--;
@@ -228,6 +282,18 @@ export class Engine {
       this.flagCount++;
     }
     return { changed: [i], origin: i, started, ended: null, kind: "flag" };
+  }
+
+  /* ----- pencil notes (candidate digit on a covered cell) ----- */
+  /** Set/clear a pencil candidate digit (1..8) on a covered cell.
+      Passing the same digit again clears it. Returns a flag-kind result. */
+  setNote(i, digit) {
+    if (this.status === "won" || this.status === "lost") return NOOP;
+    const s = this.state;
+    if (isRevealed(s, i) || isFlagged(s, i)) return NOOP;
+    digit = clampInt(digit, 0, 8);
+    this.notes[i] = this.notes[i] === digit ? 0 : digit;
+    return { changed: [i], origin: i, started: false, ended: null, kind: "note" };
   }
 
   _lose(struck) {
@@ -258,6 +324,38 @@ export class Engine {
     return changed;
   }
 
+  /* ----- undo: rewind the last reveal/flag/chord ----- */
+  _pushHistory() {
+    if (this._history.length >= HISTORY_CAP) this._history.shift();
+    this._history.push({
+      state: this.state.slice(),
+      notes: this.notes.slice(),
+      revealedCount: this.revealedCount,
+      flagCount: this.flagCount,
+      status: this.status,
+    });
+  }
+
+  get canUndo() { return this._history.length > 0; }
+
+  /** Rewind one move. Returns the indices that changed, or null if empty.
+      Using undo marks the run assisted (no best-time / leaderboard). */
+  undo() {
+    const prev = this._history.pop();
+    if (!prev) return null;
+    const before = this.state;
+    const after = prev.state;
+    const changed = [];
+    for (let i = 0; i < after.length; i++) if (before[i] !== after[i] || this.notes[i] !== prev.notes[i]) changed.push(i);
+    this.state = after;
+    this.notes = prev.notes;
+    this.revealedCount = prev.revealedCount;
+    this.flagCount = prev.flagCount;
+    this.status = prev.status;
+    this.assisted = true;
+    return changed;
+  }
+
   elapsedMs() {
     if (this.status === "idle") return 0;
     const end = (this.status === "won" || this.status === "lost") ? this.endTime : now();
@@ -269,9 +367,10 @@ export class Engine {
     return {
       width: this.width, height: this.height, mineCount: this.mineCount,
       state: Array.from(this.state), adjacency: Array.from(this.adjacency),
+      notes: Array.from(this.notes),
       revealedCount: this.revealedCount, flagCount: this.flagCount,
-      status: this.status, firstClickDone: this.firstClickDone,
-      startTime: this.startTime, endTime: this.endTime,
+      status: this.status, firstClickDone: this.firstClickDone, placed: this._placed,
+      startTime: this.startTime, endTime: this.endTime, seed: this.seed,
       assisted: this.assisted, allowQuestion: this.allowQuestion,
       safeFirstClick: this.safeFirstClick, elapsedBefore: this.elapsedMs(),
     };
@@ -281,13 +380,16 @@ export class Engine {
     const e = new Engine({
       width: snap.width, height: snap.height, mines: snap.mineCount,
       safeFirstClick: snap.safeFirstClick, allowQuestion: snap.allowQuestion,
+      seed: snap.seed,
     });
     e.state = Uint8Array.from(snap.state);
     e.adjacency = Uint8Array.from(snap.adjacency);
+    if (snap.notes) e.notes = Uint8Array.from(snap.notes);
     e.revealedCount = snap.revealedCount;
     e.flagCount = snap.flagCount;
     e.status = snap.status;
     e.firstClickDone = snap.firstClickDone;
+    e._placed = !!snap.placed;
     e.assisted = snap.assisted;
     // rebase the clock so the displayed elapsed continues smoothly
     e.startTime = now() - (snap.elapsedBefore || 0);

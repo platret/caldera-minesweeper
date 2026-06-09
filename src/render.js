@@ -13,6 +13,7 @@ const ANIM_CLASSES = [
 ];
 const FLAG = '<span class="flag-glyph">⚑</span>';
 const MINE_DOT = '<span class="mine-dot"></span>';
+const NOTE = (d) => `<span class="note-glyph">${d}</span>`;
 const DELAY_STEP = 16;
 const DELAY_CAP = 280;
 
@@ -22,6 +23,7 @@ export class Renderer {
     this.cells = [];
     this.engine = null;
     this.cursor = -1;
+    this.userZoom = 1; // user zoom multiplier on top of the auto-fit size
     // clean up one-shot animation classes when they finish
     this.board.addEventListener("animationend", (e) => {
       const t = e.target;
@@ -121,13 +123,14 @@ export class Renderer {
     }
     else if (isFlagged(s, i)) { state = "flagged"; html = FLAG; }
     else if (isQuestion(s, i)) { state = "question"; }
+    else if (this.engine.notes[i]) { state = "note"; html = NOTE(this.engine.notes[i]); }
     else { state = "hidden"; }
 
     cell.dataset.state = state;
     if (html != null) cell.innerHTML = html;
     else cell.textContent = text;
     cell.setAttribute("aria-label", this.label(i));
-    cell.setAttribute("aria-disabled", state === "hidden" || state === "flagged" || state === "question" ? "false" : "true");
+    cell.setAttribute("aria-disabled", state === "hidden" || state === "flagged" || state === "question" || state === "note" ? "false" : "true");
   }
 
   /** full repaint (used after restoring a saved game) */
@@ -149,6 +152,7 @@ export class Renderer {
     }
     if (isFlagged(s, i)) return `${pos}, flagged`;
     if (isQuestion(s, i)) return `${pos}, question mark`;
+    if (e.notes[i]) return `${pos}, pencil mark ${e.notes[i]}`;
     return `${pos}, hidden`;
   }
 
@@ -177,7 +181,14 @@ export class Renderer {
     const budgetH = Math.max(260, window.innerHeight * 0.62);
     const cw = (budgetW - gap * (e.width - 1) - wellPad * 2) / e.width;
     const ch = (budgetH - gap * (e.height - 1) - wellPad * 2) / e.height;
-    const size = Math.max(16, Math.min(40, Math.floor(Math.min(cw, ch))));
+    const base = Math.max(16, Math.min(40, Math.floor(Math.min(cw, ch))));
+    const size = Math.max(12, Math.min(72, Math.round(base * this.userZoom)));
     document.documentElement.style.setProperty("--cell-size", size + "px");
+  }
+
+  /** set the user zoom multiplier (clamped) and re-fit. */
+  setUserZoom(z) {
+    this.userZoom = Math.max(0.5, Math.min(2.5, Math.round(z * 100) / 100));
+    this.fit();
   }
 }
